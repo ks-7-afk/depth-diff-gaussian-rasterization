@@ -42,6 +42,7 @@ namespace FORWARD
 		float* depths,
 		float* cov3Ds,
 		float* colors,
+        float* xyz,
 		float4* conic_opacity,
 		const dim3 grid,
 		uint32_t* tiles_touched,
@@ -56,12 +57,14 @@ namespace FORWARD
 		const float2* points_xy_image,
 		const float* features,
 		const float* depth,
+        const float* xyz_point,
 		const float4* conic_opacity,
 		float* final_T,
 		uint32_t* n_contrib,
 		const float* bg_color,
 		float* out_color,
-		float* out_depth);
+		float* out_depth,
+        float* out_xyz);
 }
 
 
