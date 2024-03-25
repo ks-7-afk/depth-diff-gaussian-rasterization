@@ -423,6 +423,7 @@ renderCUDA(
 	const float4* __restrict__ conic_opacity,
 	const float* __restrict__ colors,
 	const float* __restrict__ depths,
+    const float* __restrict__ xyz,
 	const float* __restrict__ final_Ts,
 	const uint32_t* __restrict__ n_contrib,
 	const float* __restrict__ dL_dpixels,
@@ -431,7 +432,8 @@ renderCUDA(
 	float4* __restrict__ dL_dconic2D,
 	float* __restrict__ dL_dopacity,
 	float* __restrict__ dL_dcolors,
-	float* __restrict__ dL_ddepths)
+	float* __restrict__ dL_ddepths,
+    float* __restrict__ dL_dxyz)
 {
 	// We rasterize again. Compute necessary block info.
 	auto block = cg::this_thread_block();
@@ -455,6 +457,7 @@ renderCUDA(
 	__shared__ float4 collected_conic_opacity[BLOCK_SIZE];
 	__shared__ float collected_colors[C * BLOCK_SIZE];
 	__shared__ float collected_depths[BLOCK_SIZE];
+    __shared__ float collected_xyz[C * BLOCK_SIZE];
 
 	// In the forward, we stored the final value for T, the
 	// product of all (1 - alpha) factors. 
@@ -467,18 +470,24 @@ renderCUDA(
 	const int last_contributor = inside ? n_contrib[pix_id] : 0;
 
 	float accum_rec[C] = { 0 };
+    float accum_xyz_rec[C] = { 0 };
 	float dL_dpixel[C];
+    float dL_dpixel_dxyz[C];
+    
 	float dL_dpixel_depth;
 	float accum_depth_rec = 0;
 	if (inside){
-		for (int i = 0; i < C; i++)
+		for (int i = 0; i < C; i++){
 			dL_dpixel[i] = dL_dpixels[i * H * W + pix_id];
+            dL_dpixel_dxyz[i] = dL_dxyz[i * H * W + pix_id];
+        }
 		dL_dpixel_depth = dL_dpixel_depths[pix_id];
 	}
 
 	float last_alpha = 0;
 	float last_color[C] = { 0 };
 	float last_depth = 0;
+    float last_xyz[C] = { 0 };
 
 	// Gradient of pixel coordinate w.r.t. normalized 
 	// screen-space viewport corrdinates (-1 to 1)
@@ -500,6 +509,7 @@ renderCUDA(
 			collected_conic_opacity[block.thread_rank()] = conic_opacity[coll_id];
 			for (int i = 0; i < C; i++)
 				collected_colors[i * BLOCK_SIZE + block.thread_rank()] = colors[coll_id * C + i];
+                collected_xyz[i * BLOCK_SIZE + block.thread_rank()] = xyz[coll_id * C + i];
 			collected_depths[block.thread_rank()] = depths[coll_id];
 		}
 		block.sync();
@@ -548,12 +558,26 @@ renderCUDA(
 				// Atomic, since this pixel is just one of potentially
 				// many that were affected by this Gaussian.
 				atomicAdd(&(dL_dcolors[global_id * C + ch]), dchannel_dcolor * dL_dchannel);
+
+
+
+                const float c_xyz = collected_xyz[ch * BLOCK_SIZE + j];
+				// Update last color (to be used in the next iteration)
+				accum_xyz_rec[ch] = last_alpha * last_xyz[ch] + (1.f - last_alpha) * accum_xyz_rec[ch];
+				last_xyz[ch] = c_xyz;
+                const float dL_dpixel_xyz = dL_dpixel_dxyz[ch];
+                dL_dalpha += (c_xyz - accum_xyz_rec[ch]) * dL_dpixel_xyz;
+				// Update the gradients w.r.t. color of the Gaussian. 
+				// Atomic, since this pixel is just one of potentially
+				// many that were affected by this Gaussian.
+				atomicAdd(&(dL_dxyz[global_id * C + ch]), dchannel_dcolor * dL_dpixel_xyz);
 			}
 			const float c_d = collected_depths[j];
 			accum_depth_rec = last_alpha * last_depth + (1.f - last_alpha) * accum_depth_rec;
 			last_depth = c_d;
 			dL_dalpha += (c_d - accum_depth_rec) * dL_dpixel_depth;
 			atomicAdd(&(dL_ddepths[global_id]), dpixel_depth_ddepth * dL_dpixel_depth);
+
 
 			dL_dalpha *= T;
 			// Update last alpha (to be used in the next iteration)
@@ -667,6 +691,7 @@ void BACKWARD::render(
 	const float4* conic_opacity,
 	const float* colors,
 	const float* depths,
+    const float* xyz,
 	const float* final_Ts,
 	const uint32_t* n_contrib,
 	const float* dL_dpixels,
@@ -675,7 +700,8 @@ void BACKWARD::render(
 	float4* dL_dconic2D,
 	float* dL_dopacity,
 	float* dL_dcolors,
-	float* dL_ddepths)
+	float* dL_ddepths,
+    float* dL_dxyz)
 {
 	renderCUDA<NUM_CHANNELS> << <grid, block >> >(
 		ranges,
@@ -686,6 +712,7 @@ void BACKWARD::render(
 		conic_opacity,
 		colors,
 		depths,
+        xyz,
 		final_Ts,
 		n_contrib,
 		dL_dpixels,
@@ -694,6 +721,7 @@ void BACKWARD::render(
 		dL_dconic2D,
 		dL_dopacity,
 		dL_dcolors,
-		dL_ddepths
+		dL_ddepths,
+        dL_dxyz
 		);
 }

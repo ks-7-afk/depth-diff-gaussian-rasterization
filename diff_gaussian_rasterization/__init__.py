@@ -98,7 +98,7 @@ class _RasterizeGaussians(torch.autograd.Function):
         return color, radii, depth, xyz
 
     @staticmethod
-    def backward(ctx, grad_out_color, grad_radii, grad_depth, xyz):
+    def backward(ctx, grad_out_color, grad_radii, grad_depth, grad_xyz):
 
         # Restore necessary values from context
         num_rendered = ctx.num_rendered
@@ -127,6 +127,7 @@ class _RasterizeGaussians(torch.autograd.Function):
                 num_rendered,
                 binningBuffer,
                 imgBuffer,
+                grad_xyz,
                 raster_settings.debug)
 
         # Compute gradients for relevant tensors by invoking backward method
